@@ -1,0 +1,3 @@
+@echo off
+echo Starting Laravel Server on 192.168.7.100:8001...
+php artisan serve --host=192.168.7.100 --port=8001

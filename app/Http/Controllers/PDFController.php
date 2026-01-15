@@ -62,7 +62,8 @@ class PDFController extends Controller
 
             $zip = new \ZipArchive();
             $zipFileName = 'merged_pdfs_' . time() . '.zip';
-            $zipFilePath = $rootPath . DIRECTORY_SEPARATOR . $zipFileName;
+            // Save zip to system temp dir to avoid modifying user's folder
+            $zipFilePath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $zipFileName;
 
             if ($zip->open($zipFilePath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== TRUE) {
                 return back()->with('error', 'Gagal membuat file ZIP.');
@@ -108,7 +109,35 @@ class PDFController extends Controller
                 $pdf = new Fpdi();
                 
                 foreach ($pdfFiles as $file) {
-                    $pageCount = $pdf->setSourceFile($file);
+                    try {
+                        $pageCount = $pdf->setSourceFile($file);
+                    } catch (\Exception $e) {
+                        // If standard import fails, try to normalize/repair the PDF
+                        // This usually handles WPS/PDF 1.5+ Compressed streams
+                        $fixedFile = $this->normalizePdf($file);
+                        
+                        if ($fixedFile && file_exists($fixedFile)) {
+                            try {
+                                $pageCount = $pdf->setSourceFile($fixedFile);
+                                // If successful, use this fixed file, but DO NOT delete original
+                                // We might want to clean up temp fixed file later?
+                                // For simplicity, we just use it.
+                            } catch (\Exception $e2) {
+                                $results[] = [
+                                    'type' => 'warning',
+                                    'message' => "Gagal membaca: " . basename($file) . " (Bahkan setelah perbaikan). Error: " . $e2->getMessage()
+                                ];
+                                continue;
+                            }
+                        } else {
+                             $results[] = [
+                                'type' => 'warning',
+                                'message' => "Gagal membaca: " . basename($file) . ". Mungkin format tidak didukung (Anda butuh Ghostscript di server untuk file WPS)."
+                            ];
+                            continue;
+                        }
+                    }
+
                     for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
                         $templateId = $pdf->importPage($pageNo);
                         $size = $pdf->getTemplateSize($templateId);
@@ -132,6 +161,8 @@ class PDFController extends Controller
             }
 
             $zip->close();
+            
+            // Clean up any temp files if tracked (omitted for now for simplicity, rely on OS temp clean)
 
             if (!$hasFiles) {
                 if (file_exists($zipFilePath)) {
@@ -150,6 +181,48 @@ class PDFController extends Controller
         }
     }
 
+    /**
+     * Tries to normalize a PDF to version 1.4 using Ghostscript.
+     * Returns the path to the temporary fixed file, or null if failed/no GS.
+     */
+    private function normalizePdf($originalPath)
+    {
+        // Check for Ghostscript
+        // Windows normally uses gswin64c or gswin32c. Linux uses gs.
+        $gsBinary = null;
+        
+        // Simple check
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            $check = shell_exec('where gswin64c');
+            if ($check) $gsBinary = 'gswin64c';
+            else {
+                $check = shell_exec('where gswin32c');
+                if ($check) $gsBinary = 'gswin32c';
+            }
+        } else {
+             $check = shell_exec('which gs');
+             if ($check) $gsBinary = 'gs';
+        }
+
+        if (!$gsBinary) {
+            return null; // GS not found
+        }
+
+        $tempPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'fixed_' . uniqid() . '.pdf';
+        
+        // Command to convert to PDF 1.4 (safe for FPDI)
+        // -sDEVICE=pdfwrite -dCompatibilityLevel=1.4
+        $command = "$gsBinary -o \"$tempPath\" -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dNOPAUSE -dQUIET -dBATCH \"$originalPath\"";
+        
+        exec($command, $output, $returnCode);
+
+        if ($returnCode === 0 && file_exists($tempPath)) {
+            return $tempPath;
+        }
+
+        return null;
+    }
+
     public function downloadPdf(Request $request)
     {
         $path = $request->query('path');
@@ -158,6 +231,6 @@ class PDFController extends Controller
             abort(404, 'File not found');
         }
 
-        return response()->download($path);
+        return response()->download($path)->deleteFileAfterSend(true);
     }
 }

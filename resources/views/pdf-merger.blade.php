@@ -67,6 +67,25 @@
                                 hover:file:bg-blue-100
                                 transition-all">
                         </div>
+
+                        <!-- Sorting Options -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                            <div>
+                                <label for="sort_by" class="block text-sm font-medium text-slate-700 mb-1">Urutan Berdasarkan</label>
+                                <select name="sort_by" id="sort_by" class="block w-full rounded-lg border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2.5 border">
+                                    <option value="default">Default (Apa adanya)</option>
+                                    <option value="name">Nama File</option>
+                                    <option value="date">Tanggal File</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="sort_order" class="block text-sm font-medium text-slate-700 mb-1">Mode Urutan</label>
+                                <select name="sort_order" id="sort_order" class="block w-full rounded-lg border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2.5 border">
+                                    <option value="asc">Ascend (Kecil ke Besar)</option>
+                                    <option value="desc">Descend (Besar ke Kecil)</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

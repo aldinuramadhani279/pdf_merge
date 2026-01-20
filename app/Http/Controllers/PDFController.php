@@ -102,8 +102,47 @@ class PDFController extends Controller
                     continue;
                 }
 
-                // Sort PDFs naturally (like Windows explorer)
-                natsort($pdfFiles);
+                // Sorting Logic
+                $sortBy = $request->input('sort_by', 'default');
+                $sortOrder = $request->input('sort_order', 'asc');
+
+                if ($sortBy === 'date') {
+                    // Sort by modification time
+                    usort($pdfFiles, function($a, $b) use ($sortOrder) {
+                        $timeA = filemtime($a);
+                        $timeB = filemtime($b);
+                        if ($timeA == $timeB) return 0;
+                        return ($sortOrder === 'asc') ? ($timeA < $timeB ? -1 : 1) : ($timeA > $timeB ? -1 : 1);
+                    });
+                } elseif ($sortBy === 'name') {
+                    // Sort by filename natural order
+                    usort($pdfFiles, function($a, $b) use ($sortOrder) {
+                        return ($sortOrder === 'asc') ? strnatcasecmp($a, $b) : strnatcasecmp($b, $a);
+                    });
+                } else {
+                    // Default behavior (usually just alphabetical from scandir, or force natsort)
+                    // "Apa adanya dari folder" usually implies directory order, but scandir sorts alphabetically by default.
+                    // User said "Default aka apa adanya", usually means we keep it simple.
+                    // But previous logic used natsort. Let's keep a consistent base sort unless strict 'default' implies NO sort.
+                    // Note: scandir() gives sorted output. If user wants strictly standard OS sort (natsort), we do that.
+                    // If user selects 'Descend' on default, we just reverse key.
+                     if ($sortOrder === 'desc') {
+                        rsort($pdfFiles); // Simple reverse sort for default
+                     } elseif ($sortOrder === 'asc') {
+                         sort($pdfFiles); // Simple sort
+                     }
+                     // If default, we actually just trust the scandir/sort we did earlier or re-sort standard.
+                     // Because scandir is alphabetical.
+                     // To be safe and compliant with "ascending/descending" toggle even on default:
+                     if ($sortBy === 'default') {
+                        // Re-apply natural sort for default "clean" look
+                        if ($sortOrder == 'desc') {
+                            rsort($pdfFiles, SORT_NATURAL | SORT_FLAG_CASE);
+                        } else {
+                            sort($pdfFiles, SORT_NATURAL | SORT_FLAG_CASE);
+                        }
+                     }
+                }
 
                 // Merge PDFs
                 $pdf = new Fpdi();

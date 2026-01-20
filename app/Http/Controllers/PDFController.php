@@ -187,32 +187,70 @@ class PDFController extends Controller
      */
     private function normalizePdf($originalPath)
     {
-        // Check for Ghostscript
-        // Windows normally uses gswin64c or gswin32c. Linux uses gs.
-        $gsBinary = null;
-        
-        // Simple check
-        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-            $check = shell_exec('where gswin64c');
-            if ($check) $gsBinary = 'gswin64c';
-            else {
-                $check = shell_exec('where gswin32c');
-                if ($check) $gsBinary = 'gswin32c';
+        // 1. Check .env configuration first
+        $gsBinary = env('GS_BINARY_PATH');
+
+        // 2. If not in .env, try auto-detection via 'where' command (Windows) or 'which' (Linux)
+        if (!$gsBinary) {
+            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+                $check = shell_exec('where gswin64c');
+                if ($check) {
+                    $gsBinary = trim($check);
+                } else {
+                    $check = shell_exec('where gswin32c');
+                    if ($check) $gsBinary = trim($check);
+                }
+            } else {
+                 $check = shell_exec('which gs');
+                 if ($check) $gsBinary = trim($check);
             }
-        } else {
-             $check = shell_exec('which gs');
-             if ($check) $gsBinary = 'gs';
+        }
+
+        // 3. Fallback: Check common Windows installation paths if still not found
+        if (!$gsBinary && strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            $commonPaths = [
+                'C:\Program Files\gs\gs10.06.0\bin\gswin64c.exe',
+                'C:\Program Files\gs\gs10.04.0\bin\gswin64c.exe',
+                'C:\Program Files\gs\gs10.03.0\bin\gswin64c.exe',
+                'C:\Program Files\gs\gs10.00.0\bin\gswin64c.exe',
+                // Add more versions if needed or scan directory
+            ];
+            
+            // Try to find any gswin64c.exe in Program Files/gs
+            $gsRoot = 'C:\Program Files\gs';
+            if (is_dir($gsRoot)) {
+                $dirs = scandir($gsRoot);
+                foreach ($dirs as $dir) {
+                    if ($dir === '.' || $dir === '..') continue;
+                    $candidate = $gsRoot . DIRECTORY_SEPARATOR . $dir . '\bin\gswin64c.exe';
+                    if (file_exists($candidate)) {
+                        $gsBinary = $candidate;
+                        break;
+                    }
+                }
+            }
         }
 
         if (!$gsBinary) {
-            return null; // GS not found
+            // Log error for debugging
+            \Illuminate\Support\Facades\Log::error("Ghostscript binary not found. Please install Ghostscript or set GS_BINARY_PATH in .env");
+            return null; 
         }
 
+        // Ensure path is quoted if it contains spaces and not already quoted
+        // However, exec() argument handling can be tricky. 
+        // Best to wrap the binary path in quotes if it's an absolute path.
+        // But 'where' output might contain newlines, already handled by trim().
+        
         $tempPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'fixed_' . uniqid() . '.pdf';
         
-        // Command to convert to PDF 1.4 (safe for FPDI)
-        // -sDEVICE=pdfwrite -dCompatibilityLevel=1.4
-        $command = "$gsBinary -o \"$tempPath\" -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dNOPAUSE -dQUIET -dBATCH \"$originalPath\"";
+        // Command to convert to PDF 1.4
+        $command = sprintf(
+            '"%s" -o "%s" -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dNOPAUSE -dQUIET -dBATCH "%s"',
+            $gsBinary,
+            $tempPath,
+            $originalPath
+        );
         
         exec($command, $output, $returnCode);
 

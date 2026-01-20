@@ -36,6 +36,12 @@ class PDFController extends Controller
 
     public function merge(Request $request)
     {
+        // CRITICAL FIX: Increase limits for heavy processing
+        // Allow unlimited execution time (or a very high limit like 1 hour) because Ghostscript/Merging is slow
+        set_time_limit(3600); 
+        // Increase memory limit to handle large PDF structures
+        ini_set('memory_limit', '2048M');
+
         $request->validate([
             'root_path' => 'required|string',
             'excel_file' => 'required|file|mimes:xlsx,xls,csv',

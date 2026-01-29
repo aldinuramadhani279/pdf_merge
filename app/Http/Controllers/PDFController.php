@@ -113,39 +113,81 @@ class PDFController extends Controller
                 $sortBy = $request->input('sort_by', 'default');
                 $sortOrder = $request->input('sort_order', 'asc');
 
+                // Helper: Check if filename starts with "SEP" followed by non-letter (space, number, etc)
+                // This gives priority to "SEP ", "SEP RI", "SEP-123" but NOT "SEPTEMBER"
+                $isSepPriority = function($filename) {
+                    // Remove extension for checking
+                    $name = pathinfo($filename, PATHINFO_FILENAME);
+                    // Check if starts with SEP (case insensitive)
+                    if (stripos($name, 'SEP') === 0) {
+                        // If exactly "SEP" or followed by non-letter character
+                        if (strlen($name) === 3) {
+                            return true; // Exactly "SEP"
+                        }
+                        $charAfterSep = substr($name, 3, 1);
+                        // If the 4th character is NOT a letter (a-z, A-Z), it's a SEP priority file
+                        if (!ctype_alpha($charAfterSep)) {
+                            return true; // "SEP ", "SEP-", "SEP_", "SEP1", etc.
+                        }
+                    }
+                    return false;
+                };
+
+                // Custom compare function that prioritizes SEP files
+                $compareWithSepPriority = function($a, $b, $sortOrder) use ($isSepPriority) {
+                    $nameA = basename($a);
+                    $nameB = basename($b);
+                    
+                    $aSep = $isSepPriority($nameA);
+                    $bSep = $isSepPriority($nameB);
+                    
+                    // If both are SEP or both are not SEP, sort normally
+                    if ($aSep && !$bSep) {
+                        return -1; // A (SEP) comes first
+                    }
+                    if (!$aSep && $bSep) {
+                        return 1; // B (SEP) comes first
+                    }
+                    
+                    // Both same priority, use natural sort
+                    if ($sortOrder === 'asc') {
+                        return strnatcasecmp($nameA, $nameB);
+                    } else {
+                        return strnatcasecmp($nameB, $nameA);
+                    }
+                };
+
                 if ($sortBy === 'date') {
-                    // Sort by file modification time
-                    usort($pdfFiles, function($a, $b) use ($sortOrder) {
+                    // Sort by file modification time, but SEP files still come first
+                    usort($pdfFiles, function($a, $b) use ($sortOrder, $isSepPriority) {
+                        $nameA = basename($a);
+                        $nameB = basename($b);
+                        $aSep = $isSepPriority($nameA);
+                        $bSep = $isSepPriority($nameB);
+                        
+                        // SEP priority check first
+                        if ($aSep && !$bSep) return -1;
+                        if (!$aSep && $bSep) return 1;
+                        
+                        // Both same priority, sort by date
                         $timeA = filemtime($a);
                         $timeB = filemtime($b);
                         if ($timeA == $timeB) return 0;
                         if ($sortOrder === 'asc') {
-                            return $timeA < $timeB ? -1 : 1; // Oldest first
+                            return $timeA < $timeB ? -1 : 1;
                         } else {
-                            return $timeA > $timeB ? -1 : 1; // Newest first
+                            return $timeA > $timeB ? -1 : 1;
                         }
                     });
                 } elseif ($sortBy === 'name') {
-                    // Sort by filename (basename) using natural sorting (handles numbers correctly)
-                    usort($pdfFiles, function($a, $b) use ($sortOrder) {
-                        $nameA = basename($a);
-                        $nameB = basename($b);
-                        if ($sortOrder === 'asc') {
-                            return strnatcasecmp($nameA, $nameB); // a, b, c, d
-                        } else {
-                            return strnatcasecmp($nameB, $nameA); // d, c, b, a
-                        }
+                    // Sort by filename with SEP priority
+                    usort($pdfFiles, function($a, $b) use ($sortOrder, $compareWithSepPriority) {
+                        return $compareWithSepPriority($a, $b, $sortOrder);
                     });
                 } else {
-                    // Default: Natural sort by filename (same as name asc/desc but uses scandir order as base)
-                    usort($pdfFiles, function($a, $b) use ($sortOrder) {
-                        $nameA = basename($a);
-                        $nameB = basename($b);
-                        if ($sortOrder === 'asc') {
-                            return strnatcasecmp($nameA, $nameB);
-                        } else {
-                            return strnatcasecmp($nameB, $nameA);
-                        }
+                    // Default: Natural sort by filename with SEP priority
+                    usort($pdfFiles, function($a, $b) use ($sortOrder, $compareWithSepPriority) {
+                        return $compareWithSepPriority($a, $b, $sortOrder);
                     });
                 }
 

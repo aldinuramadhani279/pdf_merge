@@ -133,23 +133,43 @@ class PDFController extends Controller
                     return false;
                 };
 
-                // Custom compare function that prioritizes SEP files
-                $compareWithSepPriority = function($a, $b, $sortOrder) use ($isSepPriority) {
+                // Helper: Check if filename contains "KWI" or "RawatJalanBPJS" (these go LAST)
+                // Matches: "KWI", "KWITANSI", "KWI TANSI", "RawatJalanBPJS" (case insensitive)
+                $isLastPriority = function($filename) {
+                    $name = pathinfo($filename, PATHINFO_FILENAME);
+                    // Check for KWI anywhere in name (case insensitive)
+                    if (stripos($name, 'KWI') !== false) {
+                        return true;
+                    }
+                    // Check for RawatJalanBPJS anywhere in name (case insensitive)
+                    if (stripos($name, 'RawatJalanBPJS') !== false) {
+                        return true;
+                    }
+                    return false;
+                };
+
+                // Custom compare function with 3 priority tiers:
+                // 1. SEP files (first)
+                // 2. Normal files (middle)
+                // 3. KWI/RawatJalanBPJS files (last)
+                $compareWithPriority = function($a, $b, $sortOrder) use ($isSepPriority, $isLastPriority) {
                     $nameA = basename($a);
                     $nameB = basename($b);
                     
                     $aSep = $isSepPriority($nameA);
                     $bSep = $isSepPriority($nameB);
+                    $aLast = $isLastPriority($nameA);
+                    $bLast = $isLastPriority($nameB);
                     
-                    // If both are SEP or both are not SEP, sort normally
-                    if ($aSep && !$bSep) {
-                        return -1; // A (SEP) comes first
-                    }
-                    if (!$aSep && $bSep) {
-                        return 1; // B (SEP) comes first
-                    }
+                    // SEP files always come first
+                    if ($aSep && !$bSep) return -1;
+                    if (!$aSep && $bSep) return 1;
                     
-                    // Both same priority, use natural sort
+                    // KWI/RawatJalanBPJS files always come last
+                    if ($aLast && !$bLast) return 1;
+                    if (!$aLast && $bLast) return -1;
+                    
+                    // Both same priority tier, use natural sort
                     if ($sortOrder === 'asc') {
                         return strnatcasecmp($nameA, $nameB);
                     } else {
@@ -158,18 +178,24 @@ class PDFController extends Controller
                 };
 
                 if ($sortBy === 'date') {
-                    // Sort by file modification time, but SEP files still come first
-                    usort($pdfFiles, function($a, $b) use ($sortOrder, $isSepPriority) {
+                    // Sort by file modification time with priority tiers
+                    usort($pdfFiles, function($a, $b) use ($sortOrder, $isSepPriority, $isLastPriority) {
                         $nameA = basename($a);
                         $nameB = basename($b);
                         $aSep = $isSepPriority($nameA);
                         $bSep = $isSepPriority($nameB);
+                        $aLast = $isLastPriority($nameA);
+                        $bLast = $isLastPriority($nameB);
                         
-                        // SEP priority check first
+                        // SEP files always come first
                         if ($aSep && !$bSep) return -1;
                         if (!$aSep && $bSep) return 1;
                         
-                        // Both same priority, sort by date
+                        // KWI/RawatJalanBPJS files always come last
+                        if ($aLast && !$bLast) return 1;
+                        if (!$aLast && $bLast) return -1;
+                        
+                        // Both same priority tier, sort by date
                         $timeA = filemtime($a);
                         $timeB = filemtime($b);
                         if ($timeA == $timeB) return 0;
@@ -180,14 +206,14 @@ class PDFController extends Controller
                         }
                     });
                 } elseif ($sortBy === 'name') {
-                    // Sort by filename with SEP priority
-                    usort($pdfFiles, function($a, $b) use ($sortOrder, $compareWithSepPriority) {
-                        return $compareWithSepPriority($a, $b, $sortOrder);
+                    // Sort by filename with priority tiers
+                    usort($pdfFiles, function($a, $b) use ($sortOrder, $compareWithPriority) {
+                        return $compareWithPriority($a, $b, $sortOrder);
                     });
                 } else {
-                    // Default: Natural sort by filename with SEP priority
-                    usort($pdfFiles, function($a, $b) use ($sortOrder, $compareWithSepPriority) {
-                        return $compareWithSepPriority($a, $b, $sortOrder);
+                    // Default: Natural sort by filename with priority tiers
+                    usort($pdfFiles, function($a, $b) use ($sortOrder, $compareWithPriority) {
+                        return $compareWithPriority($a, $b, $sortOrder);
                     });
                 }
 

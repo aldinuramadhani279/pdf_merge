@@ -191,6 +191,10 @@ class PDFController extends Controller
                     });
                 }
 
+                // DEBUG: Log the sorted order to Laravel log
+                $sortedNames = array_map(function($f) { return basename($f); }, $pdfFiles);
+                \Illuminate\Support\Facades\Log::info("Folder: $folderName | Sort: $sortBy $sortOrder | Order: " . implode(', ', $sortedNames));
+
                 // Merge PDFs
                 $pdf = new Fpdi();
                 

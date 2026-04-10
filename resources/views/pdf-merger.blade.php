@@ -49,10 +49,16 @@
                         <!-- Root Path Input -->
                         <div>
                             <label for="root_path" class="block text-sm font-medium text-slate-700 mb-1">Lokasi Direktori Folder</label>
-                            <input type="text" name="root_path" id="root_path" required
-                                placeholder="C:\laragon\www\proyek-saya\storage\pdf"
-                                class="block w-full rounded-lg border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2.5 border">
-                            <p class="mt-1 text-xs text-slate-500">Path absolut (lengkap) di mana folder-folder berada.</p>
+                            <div class="flex flex-col sm:flex-row gap-2">
+                                <input type="text" name="root_path" id="root_path" required
+                                    placeholder="C:\laragon\www\proyek-saya\storage\pdf"
+                                    class="block w-full rounded-lg border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2.5 border">
+                                <button type="button" onclick="openDirectoryPicker()" class="whitespace-nowrap inline-flex items-center justify-center px-4 py-2.5 border border-transparent shadow-sm text-sm font-medium rounded-lg text-white bg-slate-800 hover:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900 transition-colors">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                    Telusuri...
+                                </button>
+                            </div>
+                            <p class="mt-1 text-xs text-slate-500">Path absolut (lengkap). Contoh: C:\Folder1 atau D:\DataPdf</p>
                         </div>
 
                         <!-- File Input -->
@@ -173,5 +179,112 @@
 
 
     </div>
+    </div>
+
+    <!-- Directory Picker Modal -->
+    <div id="dirPickerModal" class="fixed inset-0 z-50 hidden bg-slate-900/50 backdrop-blur-sm flex justify-center items-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h3 class="text-lg font-semibold text-slate-800">Pilih Folder Server</h3>
+                <button type="button" onclick="closeDirectoryPicker()" class="text-slate-400 hover:text-red-500 transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <div class="p-4 border-b border-slate-100 flex gap-2 items-center">
+                <button type="button" id="btnUpDir" onclick="goUpDirectory()" class="p-2 border border-slate-200 rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-30 disabled:hover:bg-transparent" title="Naik satu tingkat">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"></path></svg>
+                </button>
+                <div class="flex-1">
+                    <input type="text" id="currentPickerPath" readonly class="w-full text-sm p-2 border border-slate-200 rounded-md bg-white text-slate-800 focus:outline-none">
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-2 min-h-[300px]" id="dirListContainer">
+                <!-- Data will be loaded here -->
+            </div>
+
+            <div class="px-5 py-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
+                <button type="button" onclick="closeDirectoryPicker()" class="px-4 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50">Batal</button>
+                <button type="button" onclick="selectCurrentDirectory()" class="px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700">Gunakan Folder Ini</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentParentPath = null;
+        let currentActivePath = '';
+
+        function openDirectoryPicker() {
+            document.getElementById('dirPickerModal').classList.remove('hidden');
+            let initialPath = document.getElementById('root_path').value || '';
+            loadDirectory(initialPath);
+        }
+
+        function closeDirectoryPicker() {
+            document.getElementById('dirPickerModal').classList.add('hidden');
+        }
+
+        function selectCurrentDirectory() {
+            document.getElementById('root_path').value = currentActivePath;
+            closeDirectoryPicker();
+        }
+
+        function goUpDirectory() {
+            if (currentParentPath !== null) {
+                loadDirectory(currentParentPath);
+            }
+        }
+
+        async function loadDirectory(path) {
+            const container = document.getElementById('dirListContainer');
+            const inputPath = document.getElementById('currentPickerPath');
+            const btnUp = document.getElementById('btnUpDir');
+            
+            container.innerHTML = '<div class="flex justify-center p-8"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>';
+            
+            try {
+                const url = "{{ route('pdf.browse.directories') }}?path=" + encodeURIComponent(path);
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Terjadi kesalahan pada server');
+                }
+
+                currentActivePath = data.current_path;
+                currentParentPath = data.parent_path;
+                
+                inputPath.value = currentActivePath || 'Daftar Disk Drives (PC)';
+                
+                btnUp.disabled = (currentParentPath === null);
+
+                if (data.directories.length === 0) {
+                    container.innerHTML = '<div class="text-center p-8 text-slate-500 text-sm">Folder kosong atau Anda masuk ke folder yang tidak ada Isinya.</div>';
+                    return;
+                }
+
+                let html = '<ul class="space-y-1">';
+                data.directories.forEach(dir => {
+                    // Escape paths safely for JavaScript string interpolations
+                    const escapedPath = dir.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    
+                    html += `
+                        <li>
+                            <button type="button" onclick="loadDirectory('${escapedPath}')" class="w-full flex items-center text-left p-2.5 hover:bg-blue-50 rounded-lg text-sm text-slate-700 transition duration-150 group">
+                                <svg class="w-6 h-6 mr-3 text-yellow-400 group-hover:text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"></path></svg>
+                                <span class="truncate block w-full whitespace-nowrap">${dir.name}</span>
+                            </button>
+                        </li>
+                    `;
+                });
+                html += '</ul>';
+                container.innerHTML = html;
+
+            } catch (error) {
+                container.innerHTML = `<div class="p-4 m-2 bg-red-50 text-red-600 rounded text-sm border border-red-200">${error.message}</div>`;
+            }
+        }
+    </script>
 </body>
 </html>

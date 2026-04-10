@@ -47,7 +47,14 @@ class PDFController extends Controller
             'excel_file' => 'required|file|mimes:xlsx,xls,csv',
         ]);
 
-        $rootPath = rtrim($request->input('root_path'), '/\\');
+        // Remove accidental quotes and spaces that users often copy-paste
+        $rawPath = trim($request->input('root_path'), " \t\n\r\0\x0B\"'");
+        $rootPath = rtrim($rawPath, '/\\');
+        
+        // Fix for Windows drive letters: "C:" fails is_dir, needs to be "C:\"
+        if (preg_match('/^[a-zA-Z]:$/', $rootPath)) {
+            $rootPath .= '\\';
+        }
         
         // Check if root directory exists
         if (!is_dir($rootPath)) {
@@ -386,5 +393,106 @@ class PDFController extends Controller
         }
 
         return response()->download($path)->deleteFileAfterSend(true);
+    }
+
+    /**
+     * API Endpoint to browse server directories (for the UI Directory Picker).
+     */
+    public function browseDirectories(Request $request)
+    {
+        $path = $request->query('path');
+        
+        // Default: Show available drives on Windows if path is empty
+        if (empty($path)) {
+            $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+            $directories = [];
+            
+            if ($isWindows) {
+                // Return all accessible drives e.g., C:\, D:\
+                foreach (range('A', 'Z') as $char) {
+                    $drive = $char . ':\\';
+                    if (is_dir($drive)) {
+                        $directories[] = [
+                            'name' => 'Local Disk (' . $char . ':)',
+                            'path' => $drive,
+                            'is_dir' => true
+                        ];
+                    }
+                }
+            } else {
+                // If not windows, default to /
+                $directories[] = [
+                    'name' => 'Root System',
+                    'path' => '/',
+                    'is_dir' => true
+                ];
+            }
+            
+            return response()->json([
+                'current_path' => '',
+                'parent_path' => null,
+                'directories' => $directories
+            ]);
+        }
+
+        // Clean user input
+        $path = trim($path, " \t\n\r\0\x0B\"'");
+        $path = rtrim($path, '/\\');
+        
+        // Fix for drive letters
+        if (preg_match('/^[a-zA-Z]:$/', $path)) {
+            $path .= '\\';
+        }
+
+        if (!is_dir($path)) {
+            return response()->json(['error' => 'Path tidak ditemukan atau akses ditolak.'], 404);
+        }
+
+        $directories = [];
+        try {
+            $items = scandir($path);
+            if ($items !== false) {
+                // Sort items naturally
+                natcasesort($items);
+                
+                foreach ($items as $item) {
+                    if ($item === '.' || $item === '..') {
+                        continue;
+                    }
+                    
+                    $fullPath = rtrim($path, '/\\') . DIRECTORY_SEPARATOR . $item;
+                    
+                    // Only collect actual directories to avoid slow performance
+                    // Surrounding with try/catch inside to ignore unreadable ones
+                    if (is_dir($fullPath)) {
+                        $directories[] = [
+                            'name' => $item,
+                            'path' => $fullPath,
+                            'is_dir' => true
+                        ];
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Akses ditolak ke direktori ini.'], 403);
+        }
+
+        // Determine parent path for "Back" button
+        $parentPath = null;
+        if (preg_match('/^[a-zA-Z]:\\\\$/', $path)) {
+            // Root drive (C:\) -> goes back to drives list
+            $parentPath = ''; 
+        } elseif ($path !== '/' && $path !== '') {
+            $parentPath = dirname($path);
+            if (preg_match('/^[a-zA-Z]:$/', $parentPath)) {
+                $parentPath .= '\\';
+            }
+        }
+
+        return response()->json([
+            'current_path' => $path,
+            'parent_path' => $parentPath,
+            'directories' => array_values($directories)
+        ]);
     }
 }

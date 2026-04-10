@@ -47,17 +47,16 @@ class PDFController extends Controller
             'excel_file' => 'required|file|mimes:xlsx,xls,csv',
         ]);
 
-        // Remove accidental quotes and spaces that users often copy-paste
         $rawPath = trim($request->input('root_path'), " \t\n\r\0\x0B\"'");
         $rootPath = rtrim($rawPath, '/\\');
         
-        // Fix for Windows drive letters: "C:" fails is_dir, needs to be "C:\"
-        if (preg_match('/^[a-zA-Z]:$/', $rootPath)) {
-            $rootPath .= '\\';
-        }
+        // Remove the Z:\ backslash forcing, just let rtrim leave it as Z: 
+        // This makes mapped network drives work natively again.
         
         // Check if root directory exists
-        if (!is_dir($rootPath)) {
+        if (!is_dir($rootPath) && !is_dir($rootPath . '\\')) {
+            // As a fallback for network drives, if Z: fails, try Z:\, if Z:\ fails, try Z:
+            // But if it's already stripped down by rtrim, we check both just in case.
             return back()->with('error', "Direktori root tidak ditemukan: $rootPath");
         }
 

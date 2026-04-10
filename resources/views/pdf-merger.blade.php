@@ -51,14 +51,26 @@
                             <label for="root_path" class="block text-sm font-medium text-slate-700 mb-1">Lokasi Direktori Folder</label>
                             <div class="flex flex-col sm:flex-row gap-2">
                                 <input type="text" name="root_path" id="root_path" required
-                                    placeholder="C:\laragon\www\proyek-saya\storage\pdf"
+                                    placeholder="Contoh: Z:\ atau C:\DataPDF atau \\192.168.1.10\share"
+                                    oninput="resetPathStatus()"
                                     class="block w-full rounded-lg border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2.5 border">
-                                <button type="button" onclick="openDirectoryPicker()" class="whitespace-nowrap inline-flex items-center justify-center px-4 py-2.5 border border-transparent shadow-sm text-sm font-medium rounded-lg text-white bg-slate-800 hover:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900 transition-colors">
-                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-                                    Telusuri...
+                                <button type="button" id="btnCheckPath" onclick="checkDrivePath()" class="whitespace-nowrap inline-flex items-center justify-center px-4 py-2.5 border border-transparent shadow-sm text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none transition-colors">
+                                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                    Cek Drive
                                 </button>
                             </div>
-                            <p class="mt-1 text-xs text-slate-500">Path absolut (lengkap). Contoh: C:\Folder1 atau D:\DataPdf</p>
+                            <p class="mt-1 text-xs text-slate-500">Path absolut (lengkap). Contoh: <code>Z:\</code> atau <code>D:\DataPdf</code> atau <code>\\192.168.1.10\Share</code></p>
+
+                            <!-- Status Panel -->
+                            <div id="pathStatusPanel" class="hidden mt-3 p-3 rounded-lg border text-sm">
+                                <div class="flex items-start gap-2">
+                                    <span id="pathStatusIcon" class="text-lg leading-none mt-0.5"></span>
+                                    <div class="flex-1">
+                                        <p id="pathStatusMsg" class="font-medium"></p>
+                                        <p id="pathStatusDetail" class="text-xs mt-1 text-slate-500"></p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- File Input -->
@@ -214,6 +226,70 @@
     <script>
         let currentParentPath = null;
         let currentActivePath = '';
+
+        function resetPathStatus() {
+            const panel = document.getElementById('pathStatusPanel');
+            panel.classList.add('hidden');
+        }
+
+        async function checkDrivePath() {
+            const input = document.getElementById('root_path');
+            const path = input.value.trim();
+            if (!path) {
+                showPathStatus(false, 'Kolom path tidak boleh kosong.', '');
+                return;
+            }
+
+            const btn = document.getElementById('btnCheckPath');
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="animate-spin w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Mengecek...';
+
+            try {
+                const url = "{{ route('pdf.check.path') }}?path=" + encodeURIComponent(path);
+                const resp = await fetch(url);
+                const data = await resp.json();
+
+                if (data.ok) {
+                    let detail = `Path: ${data.path}`;
+                    if (data.folder_count >= 0) detail += ` · ${data.folder_count} folder di dalamnya`;
+                    if (data.free_gb !== null) detail += ` · Sisa disk: ${data.free_gb} GB dari ${data.total_gb} GB`;
+                    showPathStatus(true, data.message, detail);
+                } else {
+                    showPathStatus(false, data.message, data.path ? `Path yang dicoba: ${data.path}` : '');
+                }
+            } catch (e) {
+                showPathStatus(false, 'Gagal menghubungi server. Coba lagi.', e.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Cek Drive';
+            }
+        }
+
+        function showPathStatus(ok, msg, detail) {
+            const panel = document.getElementById('pathStatusPanel');
+            const icon  = document.getElementById('pathStatusIcon');
+            const msgEl = document.getElementById('pathStatusMsg');
+            const detailEl = document.getElementById('pathStatusDetail');
+
+            panel.classList.remove('hidden', 'bg-green-50', 'border-green-200', 'bg-red-50', 'border-red-200');
+            icon.classList.remove('text-green-600', 'text-red-600');
+            msgEl.classList.remove('text-green-700', 'text-red-700');
+
+            if (ok) {
+                panel.classList.add('bg-green-50', 'border-green-200');
+                icon.classList.add('text-green-600');
+                icon.textContent = '✅';
+                msgEl.classList.add('text-green-700');
+            } else {
+                panel.classList.add('bg-red-50', 'border-red-200');
+                icon.classList.add('text-red-600');
+                icon.textContent = '❌';
+                msgEl.classList.add('text-red-700');
+            }
+
+            msgEl.textContent = msg;
+            detailEl.textContent = detail;
+        }
 
         function openDirectoryPicker() {
             document.getElementById('dirPickerModal').classList.remove('hidden');

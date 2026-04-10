@@ -18,4 +18,5 @@ Route::get('/', [PDFController::class, 'index'])->name('home');
 Route::get('/template', [PDFController::class, 'downloadTemplate'])->name('pdf.template');
 Route::get('/download-result', [PDFController::class, 'downloadPdf'])->name('pdf.download.result');
 Route::get('/browse-directories', [PDFController::class, 'browseDirectories'])->name('pdf.browse.directories');
+Route::get('/check-path', [PDFController::class, 'checkPath'])->name('pdf.check.path');
 Route::post('/merge', [PDFController::class, 'merge'])->name('pdf.merge');

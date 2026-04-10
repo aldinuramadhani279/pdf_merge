@@ -396,6 +396,52 @@ class PDFController extends Controller
         return null;
     }
 
+    public function checkPath(Request $request)
+    {
+        $raw = $request->query('path', '');
+        if (empty($raw)) {
+            return response()->json(['ok' => false, 'message' => 'Path tidak boleh kosong.']);
+        }
+
+        $path = $this->normalizePath($raw);
+        $accessible = is_dir($path);
+
+        if (!$accessible) {
+            return response()->json([
+                'ok'      => false,
+                'path'    => $path,
+                'message' => 'Direktori TIDAK ditemukan atau tidak dapat diakses. Pastikan drive sudah di-map dan path benar.',
+            ]);
+        }
+
+        // Count sub-folders (these are the folders that will be processed)
+        $folderCount = 0;
+        try {
+            $items = scandir($path);
+            foreach ($items as $item) {
+                if ($item === '.' || $item === '..') continue;
+                if (is_dir($path . DIRECTORY_SEPARATOR . $item)) $folderCount++;
+            }
+        } catch (\Exception $e) {
+            $folderCount = -1;
+        }
+
+        // Free disk space info
+        $freeBytes  = @disk_free_space($path);
+        $totalBytes = @disk_total_space($path);
+        $freeGB  = $freeBytes  !== false ? round($freeBytes  / 1073741824, 2) : null;
+        $totalGB = $totalBytes !== false ? round($totalBytes / 1073741824, 2) : null;
+
+        return response()->json([
+            'ok'           => true,
+            'path'         => $path,
+            'message'      => 'Direktori ditemukan dan dapat diakses!',
+            'folder_count' => $folderCount,
+            'free_gb'      => $freeGB,
+            'total_gb'     => $totalGB,
+        ]);
+    }
+
     public function downloadPdf(Request $request)
     {
         $path = $request->query('path');

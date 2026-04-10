@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Maatwebsite\Excel\Facades\Excel;
 use setasign\Fpdi\Fpdi;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class PDFController extends Controller
@@ -34,12 +35,47 @@ class PDFController extends Controller
         return new StreamedResponse($callback, 200, $headers);
     }
 
+    /**
+     * Normalize a filesystem path for use with PHP's is_dir() on Windows.
+     * Handles: drive roots (C:\, Z:\), mapped network drives, UNC paths (\\server\share).
+     */
+    private function normalizePath(string $input): string
+    {
+        // Strip accidental surrounding quotes and whitespace
+        $path = trim($input, " \t\n\r\0\x0B\"'");
+
+        // Replace forward slashes with backslashes for Windows style
+        $path = str_replace('/', '\\', $path);
+
+        // UNC paths (\\server\share\...) - do NOT strip trailing slash, return as-is
+        if (str_starts_with($path, '\\\\')) {
+            return rtrim($path, '\\');
+        }
+
+        // Windows drive root like "C:", "Z:", "C:\", "Z:\" 
+        // MUST always end with backslash for is_dir() to work on mapped/network drives
+        if (preg_match('/^[a-zA-Z]:/', $path)) {
+            // Strip trailing slashes first, then add exactly one backslash
+            $drive   = substr($path, 0, 2);   // e.g. "C:"
+            $rest    = substr($path, 2);       // e.g. "\some\folder" or "\" or ""
+            $rest    = rtrim($rest, '\\');     // strip trailing slashes from sub-path
+
+            if ($rest === '') {
+                // It's just a drive root: "C:" or "C:\" → always keep as "C:\"
+                return $drive . '\\';
+            }
+            // It's a sub-folder: "C:\Folder\Data"
+            return $drive . $rest;
+        }
+
+        // Fallback: strip trailing slash (for Linux-style absolute paths, etc.)
+        return rtrim($path, '/\\');
+    }
+
     public function merge(Request $request)
     {
         // CRITICAL FIX: Increase limits for heavy processing
-        // Allow unlimited execution time (or a very high limit like 1 hour) because Ghostscript/Merging is slow
-        set_time_limit(3600); 
-        // Increase memory limit to handle large PDF structures
+        set_time_limit(3600);
         ini_set('memory_limit', '2048M');
 
         $request->validate([
@@ -47,17 +83,12 @@ class PDFController extends Controller
             'excel_file' => 'required|file|mimes:xlsx,xls,csv',
         ]);
 
-        $rawPath = trim($request->input('root_path'), " \t\n\r\0\x0B\"'");
-        $rootPath = rtrim($rawPath, '/\\');
-        
-        // Remove the Z:\ backslash forcing, just let rtrim leave it as Z: 
-        // This makes mapped network drives work natively again.
-        
+        $rootPath = $this->normalizePath($request->input('root_path'));
+
         // Check if root directory exists
-        if (!is_dir($rootPath) && !is_dir($rootPath . '\\')) {
-            // As a fallback for network drives, if Z: fails, try Z:\, if Z:\ fails, try Z:
-            // But if it's already stripped down by rtrim, we check both just in case.
-            return back()->with('error', "Direktori root tidak ditemukan: $rootPath");
+        if (!is_dir($rootPath)) {
+            Log::error("merge(): is_dir() failed. Normalized path: [{$rootPath}]");
+            return back()->with('error', "Direktori root tidak ditemukan: {$rootPath}");
         }
 
         try {
@@ -87,12 +118,12 @@ class PDFController extends Controller
                 $folderName = $row[0] ?? null;
                 if (!$folderName) continue;
 
-                $fullFolderPath = $rootPath . DIRECTORY_SEPARATOR . $folderName;
+                $fullFolderPath = rtrim($rootPath, '\\') . DIRECTORY_SEPARATOR . $folderName;
 
                 if (!is_dir($fullFolderPath)) {
                     $results[] = [
                         'type' => 'error',
-                        'message' => "Dilewati: Folder '$folderName' tidak ditemukan."
+                        'message' => "Dilewati: Folder '$folderName' tidak ditemukan.",
                     ];
                     continue;
                 }
@@ -109,7 +140,7 @@ class PDFController extends Controller
                 if (empty($pdfFiles)) {
                     $results[] = [
                         'type' => 'warning',
-                        'message' => "Dilewati: Tidak ada file PDF di '$folderName'."
+                        'message' => "Dilewati: Tidak ada file PDF di '$folderName'.",
                     ];
                     continue;
                 }
@@ -225,7 +256,7 @@ class PDFController extends Controller
 
                 // DEBUG: Log the sorted order to Laravel log
                 $sortedNames = array_map(function($f) { return basename($f); }, $pdfFiles);
-                \Illuminate\Support\Facades\Log::info("Folder: $folderName | Sort: $sortBy $sortOrder | Order: " . implode(', ', $sortedNames));
+                Log::info("Folder: $folderName | Sort: $sortBy $sortOrder | Order: " . implode(', ', $sortedNames));
 
                 // Merge PDFs
                 $pdf = new Fpdi();
@@ -242,8 +273,6 @@ class PDFController extends Controller
                             try {
                                 $pageCount = $pdf->setSourceFile($fixedFile);
                                 // If successful, use this fixed file, but DO NOT delete original
-                                // We might want to clean up temp fixed file later?
-                                // For simplicity, we just use it.
                             } catch (\Exception $e2) {
                                 $results[] = [
                                     'type' => 'warning',
@@ -283,8 +312,6 @@ class PDFController extends Controller
             }
 
             $zip->close();
-            
-            // Clean up any temp files if tracked (omitted for now for simplicity, rely on OS temp clean)
 
             if (!$hasFiles) {
                 if (file_exists($zipFilePath)) {
@@ -330,21 +357,13 @@ class PDFController extends Controller
 
         // 3. Fallback: Check common Windows installation paths if still not found
         if (!$gsBinary && strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-            $commonPaths = [
-                'C:\Program Files\gs\gs10.06.0\bin\gswin64c.exe',
-                'C:\Program Files\gs\gs10.04.0\bin\gswin64c.exe',
-                'C:\Program Files\gs\gs10.03.0\bin\gswin64c.exe',
-                'C:\Program Files\gs\gs10.00.0\bin\gswin64c.exe',
-                // Add more versions if needed or scan directory
-            ];
-            
             // Try to find any gswin64c.exe in Program Files/gs
-            $gsRoot = 'C:\Program Files\gs';
+            $gsRoot = 'C:\\Program Files\\gs';
             if (is_dir($gsRoot)) {
                 $dirs = scandir($gsRoot);
                 foreach ($dirs as $dir) {
                     if ($dir === '.' || $dir === '..') continue;
-                    $candidate = $gsRoot . DIRECTORY_SEPARATOR . $dir . '\bin\gswin64c.exe';
+                    $candidate = $gsRoot . DIRECTORY_SEPARATOR . $dir . '\\bin\\gswin64c.exe';
                     if (file_exists($candidate)) {
                         $gsBinary = $candidate;
                         break;
@@ -354,15 +373,9 @@ class PDFController extends Controller
         }
 
         if (!$gsBinary) {
-            // Log error for debugging
-            \Illuminate\Support\Facades\Log::error("Ghostscript binary not found. Please install Ghostscript or set GS_BINARY_PATH in .env");
+            Log::error("Ghostscript binary not found. Please install Ghostscript or set GS_BINARY_PATH in .env");
             return null; 
         }
-
-        // Ensure path is quoted if it contains spaces and not already quoted
-        // However, exec() argument handling can be tricky. 
-        // Best to wrap the binary path in quotes if it's an absolute path.
-        // But 'where' output might contain newlines, already handled by trim().
         
         $tempPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'fixed_' . uniqid() . '.pdf';
         
@@ -434,14 +447,8 @@ class PDFController extends Controller
             ]);
         }
 
-        // Clean user input
-        $path = trim($path, " \t\n\r\0\x0B\"'");
-        $path = rtrim($path, '/\\');
-        
-        // Fix for drive letters
-        if (preg_match('/^[a-zA-Z]:$/', $path)) {
-            $path .= '\\';
-        }
+        // Normalize the incoming path
+        $path = $this->normalizePath($path);
 
         if (!is_dir($path)) {
             return response()->json(['error' => 'Path tidak ditemukan atau akses ditolak.'], 404);
@@ -462,7 +469,6 @@ class PDFController extends Controller
                     $fullPath = rtrim($path, '/\\') . DIRECTORY_SEPARATOR . $item;
                     
                     // Only collect actual directories to avoid slow performance
-                    // Surrounding with try/catch inside to ignore unreadable ones
                     if (is_dir($fullPath)) {
                         $directories[] = [
                             'name' => $item,
@@ -483,6 +489,7 @@ class PDFController extends Controller
             $parentPath = ''; 
         } elseif ($path !== '/' && $path !== '') {
             $parentPath = dirname($path);
+            // If dirname returns "C:", fix it to "C:\"
             if (preg_match('/^[a-zA-Z]:$/', $parentPath)) {
                 $parentPath .= '\\';
             }

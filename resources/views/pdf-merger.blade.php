@@ -188,9 +188,6 @@
                  </div>
             </div>
         @endif
-
-
-    </div>
     </div>
 
     <!-- Directory Picker Modal -->

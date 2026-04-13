@@ -260,6 +260,8 @@ class PDFController extends Controller
 
                 // Merge PDFs
                 $pdf = new Fpdi();
+                $mergedCount  = 0;  // Track actually merged files
+                $skippedFiles = []; // Track which files were skipped
                 
                 foreach ($pdfFiles as $file) {
                     try {
@@ -272,19 +274,24 @@ class PDFController extends Controller
                         if ($fixedFile && file_exists($fixedFile)) {
                             try {
                                 $pageCount = $pdf->setSourceFile($fixedFile);
+                                Log::info("GS Fix OK: " . basename($file) . " di folder $folderName");
                                 // If successful, use this fixed file, but DO NOT delete original
                             } catch (\Exception $e2) {
+                                $skippedFiles[] = basename($file);
                                 $results[] = [
                                     'type' => 'warning',
-                                    'message' => "Gagal membaca: " . basename($file) . " (Bahkan setelah perbaikan). Error: " . $e2->getMessage()
+                                    'message' => "⚠ Folder '$folderName': File '" . basename($file) . "' DILEWATI (gagal bahkan setelah perbaikan GS). Error: " . $e2->getMessage()
                                 ];
+                                Log::warning("GS Fix FAILED for: " . basename($file) . " in $folderName. Error: " . $e2->getMessage());
                                 continue;
                             }
                         } else {
-                             $results[] = [
+                            $skippedFiles[] = basename($file);
+                            $results[] = [
                                 'type' => 'warning',
-                                'message' => "Gagal membaca: " . basename($file) . ". Mungkin format tidak didukung (Anda butuh Ghostscript di server untuk file WPS)."
+                                'message' => "⚠ Folder '$folderName': File '" . basename($file) . "' DILEWATI (format tidak didukung / Ghostscript tidak dapat membaca file ini)."
                             ];
+                            Log::warning("FPDI + GS both failed for: " . basename($file) . " in $folderName. Original error: " . $e->getMessage());
                             continue;
                         }
                     }
@@ -295,6 +302,17 @@ class PDFController extends Controller
                         $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
                         $pdf->useTemplate($templateId);
                     }
+                    $mergedCount++;
+                }
+
+                // Only add to ZIP if at least 1 file was actually merged
+                if ($mergedCount === 0) {
+                    $results[] = [
+                        'type' => 'error',
+                        'message' => "❌ Folder '$folderName': Semua " . count($pdfFiles) . " file gagal diproses. Folder ini TIDAK ditambahkan ke ZIP.",
+                    ];
+                    Log::error("Folder $folderName: 0 files merged, skipping ZIP entry.");
+                    continue;
                 }
 
                 $outputFilename = $folderName . '.pdf';
@@ -305,10 +323,19 @@ class PDFController extends Controller
                 $zip->addFromString($outputFilename, $pdfContent);
                 $hasFiles = true;
 
-                $results[] = [
-                    'type' => 'success',
-                    'message' => "Sukses: Menggabungkan " . count($pdfFiles) . " file menjadi '$folderName.pdf' (ditambahkan ke ZIP).",
-                ];
+                // Show partial success if some files were skipped
+                $totalFound = count($pdfFiles);
+                if (count($skippedFiles) > 0) {
+                    $results[] = [
+                        'type' => 'warning',
+                        'message' => "⚠ Folder '$folderName': SEBAGIAN BERHASIL — $mergedCount dari $totalFound file digabung. " . count($skippedFiles) . " file dilewati: " . implode(', ', $skippedFiles),
+                    ];
+                } else {
+                    $results[] = [
+                        'type' => 'success',
+                        'message' => "✅ Folder '$folderName': Berhasil menggabungkan $mergedCount dari $totalFound file menjadi '$folderName.pdf'.",
+                    ];
+                }
             }
 
             $zip->close();

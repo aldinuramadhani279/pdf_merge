@@ -116,7 +116,7 @@ class PDFController extends Controller
             $tempPdfFilesToCleanup = []; // Track temp files to delete later
 
             foreach ($rows as $row) {
-                $folderName = $row[0] ?? null;
+                $folderName = trim($row[0] ?? '');
                 if (!$folderName) continue;
 
                 $fullFolderPath = rtrim($rootPath, '\\') . DIRECTORY_SEPARATOR . $folderName;
@@ -316,7 +316,9 @@ class PDFController extends Controller
                     continue;
                 }
 
-                $outputFilename = $folderName . '.pdf';
+                // Pastikan nama file PDF yang masuk ZIP tidak memiliki karakter ilegal Windows atau \r\n
+                $safeNameForZip = preg_replace('/[\/\\\:\*\?\"\<\>\|\r\n]/', '_', $folderName);
+                $outputFilename = $safeNameForZip . '.pdf';
                 
                 // Gunakan file temporary alih-alih memory (S) untuk cegah ZIP Corrupt karena kepenuhan RAM
                 $tempPdfPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'merged_' . uniqid() . '.pdf';
@@ -342,7 +344,14 @@ class PDFController extends Controller
                 }
             }
 
-            $zip->close();
+            if (!$zip->close()) {
+                Log::error("ZipArchive::close() gagal. Kode status: " . $zip->status);
+                // Coba bersihkan file temporary
+                foreach ($tempPdfFilesToCleanup as $tmpFile) {
+                    if (file_exists($tmpFile)) @unlink($tmpFile);
+                }
+                return back()->with('error', 'Gagal memfinalisasi (menulis) file ZIP secara utuh karena batas sistem.');
+            }
 
             // Hapus semua file temporary PDF setelah ZIP berhasil di-close
             foreach ($tempPdfFilesToCleanup as $tmpFile) {
@@ -482,6 +491,9 @@ class PDFController extends Controller
 
     public function downloadPdf(Request $request)
     {
+        // Cegah download ZIP besar terputus di tengah jalan karena timeout PHP
+        set_time_limit(0);
+        
         $path = $request->query('path');
 
         if (!file_exists($path)) {

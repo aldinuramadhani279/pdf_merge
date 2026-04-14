@@ -113,6 +113,7 @@ class PDFController extends Controller
             }
 
             $hasFiles = false;
+            $tempPdfFilesToCleanup = []; // Track temp files to delete later
 
             foreach ($rows as $row) {
                 $folderName = $row[0] ?? null;
@@ -316,11 +317,14 @@ class PDFController extends Controller
                 }
 
                 $outputFilename = $folderName . '.pdf';
-                // Output 'S' = return as string
-                $pdfContent = $pdf->Output('S');
                 
-                // Add string to zip
-                $zip->addFromString($outputFilename, $pdfContent);
+                // Gunakan file temporary alih-alih memory (S) untuk cegah ZIP Corrupt karena kepenuhan RAM
+                $tempPdfPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'merged_' . uniqid() . '.pdf';
+                $pdf->Output($tempPdfPath, 'F');
+                
+                // Add physical file to zip (jauh lebih aman dibanding addFromString untuk file besar)
+                $zip->addFile($tempPdfPath, $outputFilename);
+                $tempPdfFilesToCleanup[] = $tempPdfPath;
                 $hasFiles = true;
 
                 // Show partial success if some files were skipped
@@ -339,6 +343,13 @@ class PDFController extends Controller
             }
 
             $zip->close();
+
+            // Hapus semua file temporary PDF setelah ZIP berhasil di-close
+            foreach ($tempPdfFilesToCleanup as $tmpFile) {
+                if (file_exists($tmpFile)) {
+                    @unlink($tmpFile);
+                }
+            }
 
             if (!$hasFiles) {
                 if (file_exists($zipFilePath)) {
